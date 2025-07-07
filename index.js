@@ -219,21 +219,24 @@ class ByieldBot {
   }
 
   async createSwapTransaction(keypair, suiAmount) {
-    const tx = new TransactionBlock();
-    const amountInMist = this.suiToMist(suiAmount);
+  const tx = new TransactionBlock();
+  const amountInMist = this.suiToMist(suiAmount);
 
-    const [coin] = tx.splitCoins(tx.gas, [tx.pure(amountInMist)]);
+  const [coin] = tx.splitCoins(tx.gas, [tx.pure(amountInMist)]);
 
-    tx.moveCall({
-      target: `${BYIELD_PACKAGE}::nbtc_swap::swap_sui_for_nbtc`,
-      arguments: [
-        tx.object(VAULT_OBJECT),
-        coin
-      ]
-    });
-    
-    return tx;
-  }
+  tx.moveCall({
+  target: `${BYIELD_PACKAGE}::nbtc_swap::swap_sui_for_nbtc`,
+  typeArguments: ['0x2::sui::SUI'], // Add this line!
+  arguments: [
+    tx.sharedObject({
+      objectId: VAULT_OBJECT,
+      initialSharedVersion: INITIAL_SHARED_VERSION,
+      mutable: true
+    }),
+    coin
+  ]
+});
+
 
   async executeSwap(keyObj, suiAmount, accountIndex) {
     try {
