@@ -218,7 +218,7 @@ class ByieldBot {
     return Math.floor(suiAmount * 1e9);
   }
 
-  async createSwapTransaction(keypair, suiAmount) {
+    async createSwapTransaction(keypair, suiAmount) {
     const tx = new TransactionBlock();
     const amountInMist = this.suiToMist(suiAmount);
 
@@ -227,13 +227,20 @@ class ByieldBot {
     tx.moveCall({
       target: `${BYIELD_PACKAGE}::nbtc_swap::swap_sui_for_nbtc`,
       arguments: [
-        tx.object(VAULT_OBJECT),
+        tx.sharedObject({
+          objectId: VAULT_OBJECT,
+          initialSharedVersion: INITIAL_SHARED_VERSION,
+          mutable: true
+        }),
         coin
       ]
     });
-    
+
+    tx.setGasBudget(100_000_000); // Optional: set sufficient gas budget
+
     return tx;
   }
+
 
   async executeSwap(keyObj, suiAmount, accountIndex) {
     try {
