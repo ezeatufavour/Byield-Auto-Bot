@@ -59,32 +59,32 @@ class ByieldBot {
     while (true) {
       const privateKey = process.env[`PRIVATE_KEY_${index}`];
       const mnemonic = process.env[`MNEMONIC_${index}`];
-      
+
       if (!privateKey && !mnemonic) {
-        break; 
+        break;
       }
-      
+
       if (privateKey && privateKey.trim() !== '') {
-        keys.push({ 
-          type: 'privateKey', 
+        keys.push({
+          type: 'privateKey',
           value: privateKey.trim(),
-          index: index 
+          index: index
         });
         logger.info(`Loaded Private Key ${index}`);
       }
-      
+
       if (mnemonic && mnemonic.trim() !== '') {
-        keys.push({ 
-          type: 'mnemonic', 
+        keys.push({
+          type: 'mnemonic',
           value: mnemonic.trim(),
-          index: index 
+          index: index
         });
         logger.info(`Loaded Mnemonic ${index}`);
       }
-      
+
       index++;
     }
-    
+
     if (keys.length === 0) {
       logger.error("No private keys or mnemonics found in .env file!");
       logger.error("Please check your .env file format:");
@@ -92,7 +92,7 @@ class ByieldBot {
       logger.error("MNEMONIC_1=your mnemonic phrase here");
       process.exit(1);
     }
-    
+
     this.keys = keys;
     logger.success(`Total loaded: ${keys.length} keys`);
   }
@@ -119,7 +119,6 @@ class ByieldBot {
       throw error;
     }
   }
-
   loadProxies() {
     try {
       if (fs.existsSync('proxies.txt')) {
@@ -155,7 +154,6 @@ class ByieldBot {
 
   getNextProxy() {
     if (this.proxies.length === 0) return null;
-    
     const proxy = this.proxies[this.currentProxyIndex];
     this.currentProxyIndex = (this.currentProxyIndex + 1) % this.proxies.length;
     return proxy;
@@ -164,7 +162,7 @@ class ByieldBot {
   initializeClient() {
     const proxy = this.getNextProxy();
     const clientOptions = {};
-    
+
     if (proxy) {
       const agent = this.createProxyAgent(proxy);
       if (agent) {
@@ -172,7 +170,7 @@ class ByieldBot {
         logger.info(`Using proxy: ${proxy}`);
       }
     }
-    
+
     this.client = new SuiClient({
       url: getFullnodeUrl('testnet'),
       ...clientOptions
@@ -185,11 +183,10 @@ class ByieldBot {
         owner: address,
         coinType: '0x2::sui::SUI'
       });
-      
+
       const balanceInSui = parseInt(balance.totalBalance) / 1e9;
       logger.balance(`Account ${accountIndex + 1} (${keyType}) Balance: ${balanceInSui.toFixed(4)} SUI`);
       logger.explorer(`Explorer: ${EXPLORER_BASE_URL}/address/${address}`);
-      
       return balanceInSui;
     } catch (error) {
       logger.error(`Error getting balance for account ${accountIndex + 1}: ${error.message}`);
@@ -200,7 +197,7 @@ class ByieldBot {
   async displayAllBalances() {
     logger.step("Checking all account balances...");
     console.log();
-    
+
     for (let i = 0; i < this.keys.length; i++) {
       try {
         const keypair = this.getKeypair(this.keys[i]);
@@ -210,7 +207,7 @@ class ByieldBot {
         logger.error(`Error checking balance for account ${i + 1}: ${error.message}`);
       }
     }
-    
+
     console.log();
   }
 
@@ -219,41 +216,44 @@ class ByieldBot {
   }
 
   async createSwapTransaction(keypair, suiAmount) {
-  const tx = new TransactionBlock();
-  const amountInMist = this.suiToMist(suiAmount);
+    const tx = new TransactionBlock();
+    const amountInMist = this.suiToMist(suiAmount);
 
-  const [coin] = tx.splitCoins(tx.gas, [tx.pure(amountInMist)]);
+    const [coin] = tx.splitCoins(tx.gas, [tx.pure(amountInMist)]);
 
-  tx.moveCall({
-  target: `${BYIELD_PACKAGE}::nbtc_swap::swap_sui_for_nbtc`,
-  typeArguments: ['0x2::sui::SUI'], // Add this line!
-  arguments: [
-    tx.sharedObject({
-      objectId: VAULT_OBJECT,
-      initialSharedVersion: INITIAL_SHARED_VERSION,
-      mutable: true
-    }),
-    coin
-  ]
-});
+    tx.moveCall({
+      target: `${BYIELD_PACKAGE}::nbtc_swap::swap_sui_for_nbtc`,
+      typeArguments: ['0x2::sui::SUI'],
+      arguments: [
+        tx.sharedObject({
+          objectId: VAULT_OBJECT,
+          initialSharedVersion: INITIAL_SHARED_VERSION,
+          mutable: true
+        }),
+        coin
+      ]
+    });
 
+    tx.setGasBudget(100_000_000);
+    return tx;
+  }
 
   async executeSwap(keyObj, suiAmount, accountIndex) {
     try {
       const keypair = this.getKeypair(keyObj);
       const address = keypair.getPublicKey().toSuiAddress();
-      
+
       logger.loading(`Account ${accountIndex + 1} (${keyObj.type}) (${address.slice(0, 8)}...): Creating swap transaction`);
 
       const balanceInSui = await this.getAndDisplayBalance(address, accountIndex, keyObj.type);
-      
+
       if (balanceInSui < suiAmount) {
         logger.error(`Account ${accountIndex + 1}: Insufficient balance. Available: ${balanceInSui.toFixed(4)} SUI, Required: ${suiAmount} SUI`);
         return false;
       }
 
       const tx = await this.createSwapTransaction(keypair, suiAmount);
-      
+
       const result = await this.client.signAndExecuteTransactionBlock({
         signer: keypair,
         transactionBlock: tx,
@@ -263,14 +263,14 @@ class ByieldBot {
           showBalanceChanges: true
         }
       });
-      
+
       if (result.effects?.status?.status === 'success') {
-        const nbtcChange = result.balanceChanges?.find(change => 
+        const nbtcChange = result.balanceChanges?.find(change =>
           change.coinType.includes('nbtc::NBTC') && parseInt(change.amount) > 0
         );
-        
+
         const nbtcReceived = nbtcChange ? (parseInt(nbtcChange.amount) / 1e8).toFixed(8) : '0';
-        
+
         logger.success(`Account ${accountIndex + 1}: Swap successful! TX: ${result.digest}`);
         logger.success(`Account ${accountIndex + 1}: Received ${nbtcReceived} nBTC`);
         logger.explorer(`Transaction: ${EXPLORER_BASE_URL}/tx/${result.digest}`);
@@ -279,13 +279,12 @@ class ByieldBot {
         logger.error(`Account ${accountIndex + 1}: Transaction failed`);
         return false;
       }
-      
+
     } catch (error) {
       logger.error(`Account ${accountIndex + 1}: Error executing swap - ${error.message}`);
       return false;
     }
   }
-
   async run() {
     logger.banner();
 
@@ -300,12 +299,12 @@ class ByieldBot {
     const transactionCount = parseInt(readlineSync.question('Enter number of transactions per account: '));
 
     const delayBetweenTx = 10000;
-    
+
     if (isNaN(suiAmount) || isNaN(transactionCount) || suiAmount <= 0 || transactionCount <= 0) {
       logger.error("Invalid input values!");
       return;
     }
-    
+
     console.log();
     logger.info("Starting transactions...");
     console.log();
@@ -314,18 +313,18 @@ class ByieldBot {
       logger.step(`Processing Account ${accountIndex + 1}/${this.keys.length} (${this.keys[accountIndex].type})`);
 
       this.initializeClient();
-      
+
       let successCount = 0;
-      
+
       for (let txIndex = 0; txIndex < transactionCount; txIndex++) {
         logger.loading(`Account ${accountIndex + 1}: Transaction ${txIndex + 1}/${transactionCount}`);
-        
+
         const success = await this.executeSwap(
-          this.keys[accountIndex], 
-          suiAmount, 
+          this.keys[accountIndex],
+          suiAmount,
           accountIndex
         );
-        
+
         if (success) {
           successCount++;
         }
@@ -335,7 +334,7 @@ class ByieldBot {
           await new Promise(resolve => setTimeout(resolve, delayBetweenTx));
         }
       }
-      
+
       logger.success(`Account ${accountIndex + 1} completed: ${successCount}/${transactionCount} successful transactions`);
       console.log();
 
@@ -343,7 +342,7 @@ class ByieldBot {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
-    
+
     logger.success("All transactions completed!");
     logger.explorer(`View all transactions on: ${EXPLORER_BASE_URL}`);
   }
